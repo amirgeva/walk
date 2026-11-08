@@ -34,7 +34,9 @@ Then open <http://localhost:8000>. `tests.html` runs the unit tests for the anal
 - **Reverse** walks the route the other way, so you can compare the uphill direction with the downhill one.
 - **Import GPX** to rate a recorded or planned track. **Export GPX** saves the route with elevations.
 - **Height map overlay**: *Relief* (hillshade), *Slope* (colours steep ground), or *Elevation* (colours stretched to the visible area).
-- The URL hash holds the waypoints, so you can bookmark or share a route.
+- **Share** gives a link to the route, with buttons to copy it or send it by WhatsApp or email. Opening the link shows the
+  same route in the app. The URL hash holds the waypoints and route style, so the route is recalculated when the link is
+  opened. Imported GPX tracks are stored in the link too, simplified just enough to keep it under about 1,600 characters.
 
 ## How the difficulty is calculated
 
@@ -75,4 +77,5 @@ may be smoothed out.
 | `js/routing.js` | OSRM and Valhalla clients (rate-limited) |
 | `js/planner.js` | Route modes: main streets, flattest (candidate generation and scoring), shortest |
 | `js/profile.js` | Canvas elevation profile chart |
+| `js/share.js` | Store a route in the URL, for share links |
 | `js/app.js` | UI wiring |

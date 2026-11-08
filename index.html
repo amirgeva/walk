@@ -58,6 +58,15 @@
       <div class="buttons">
         <label class="file-btn">Import GPX<input type="file" id="file-gpx" accept=".gpx,application/gpx+xml"></label>
         <button id="btn-gpx">Export GPX</button>
+        <button id="btn-share" title="Get a link to this route" aria-expanded="false" aria-controls="share" disabled>Share</button>
+      </div>
+      <div id="share" hidden>
+        <input id="share-url" type="text" readonly aria-label="Link to this route">
+        <div class="buttons">
+          <button id="btn-copy">Copy link</button>
+          <a id="share-whatsapp" class="btn" target="_blank" rel="noopener">WhatsApp</a>
+          <a id="share-mail" class="btn">Email</a>
+        </div>
       </div>
       <div id="status" role="status" aria-live="polite"></div>
     </section>
