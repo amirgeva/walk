@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Walk Hills tests</title>
+<style>body{font:14px monospace;padding:16px}.pass{color:green}.fail{color:#b00}</style></head>
+<body>
+<h1>Walk Hills – unit tests</h1>
+<pre id="out"></pre>
+<script type="module">
+import { analyze, fillGaps, findClimbs, gradeClass, toblerSpeed } from './js/difficulty.js';
+import { densify, haversine } from './js/geo.js';
+import { decodePolyline6 } from './js/routing.js';
+import { trimSpur, sidePoint } from './js/planner.js';
+
+const out = document.getElementById('out');
+let pass = 0, fail = 0;
+function check(name, cond, detail = '') {
+  cond ? pass++ : fail++;
+  out.innerHTML += `<span class="${cond ? 'pass' : 'fail'}">${cond ? 'PASS' : 'FAIL'}</span> ${name} ${detail}\n`;
+}
+const near = (a, b, tol) => Math.abs(a - b) <= tol;
+
+// Synthetic route: points every 10 m along a meridian with a given elevation function.
+function route(lengthM, elevFn, step = 10) {
+  const pts = [];
+  for (let d = 0; d <= lengthM + 1e-9; d += step) pts.push({ lat: 0, lng: 0, d, e: elevFn(d) });
+  return pts;
+}
+
+// geo
+check('haversine 1° latitude ≈ 111.2 km', near(haversine({ lat: 0, lng: 0 }, { lat: 1, lng: 0 }), 111195, 50));
+const dz = densify([{ lat: 0, lng: 0 }, { lat: 0.01, lng: 0 }], 10);
+check('densify spacing ≤ 10 m and total length kept', dz.length === 113 && near(dz.at(-1).d, 1111.95, 0.5), `(${dz.length} pts)`);
+
+// helpers
+check('fillGaps interpolates', fillGaps([null, 10, null, 30, null]).join() === '10,10,20,30,30');
+check('fillGaps all-null → null', fillGaps([null, null]) === null);
+check('gradeClass buckets', [-20, -5, 0, 4, 8, 12, 30].map(gradeClass).join() === '0,1,2,3,4,5,6');
+check('Tobler: ~5 km/h on flat', near(toblerSpeed(0), 5036, 5));
+check('Tobler: fastest at −5%', toblerSpeed(-0.05) > toblerSpeed(0) && toblerSpeed(-0.05) > toblerSpeed(-0.1));
+
+// flat
+let a = analyze(route(3000, () => 50));
+check('flat 3 km: no climb', a.ascent === 0 && a.descent === 0);
+check('flat 3 km: level Easy', a.level === 0);
+check('flat 3 km: ~36 min', near(a.hours * 60, 35.7, 1), `(${(a.hours * 60).toFixed(1)} min)`);
+
+// steady 8% climb over 2 km = 160 m
+a = analyze(route(2000, (d) => d * 0.08));
+check('8% climb: ascent ≈ 160 m', near(a.ascent, 160, 2), `(${a.ascent.toFixed(1)})`);
+check('8% climb: steepest 100 m ≈ 8%', near(a.maxSustainedUp, 8, 0.2));
+check('8% climb: one climb found', a.climbs.length === 1 && near(a.climbs[0].avgGrade, 8, 0.3));
+check('8% climb: effort 3.6 → Easy, no bump', a.level === 0, `(effort ${a.effortKm.toFixed(2)})`);
+
+// Short, very steep: 600 m at 18% (108 m)
+a = analyze(route(600, (d) => d * 0.18));
+check('600 m @ 18%: two steepness bumps → Challenging', a.level === 2, `(level ${a.level + 1}: ${a.reasons.join(' ')})`);
+
+// Up-and-down: noise should not inflate ascent much
+a = analyze(route(5000, (d) => 100 + 60 * Math.sin(d / 5000 * 2 * Math.PI) + (Math.sin(d * 7.3) * 1.5)));
+check('noisy hill: ascent ≈ 120 m (smoothing removes jitter)', near(a.ascent, 120, 12), `(${a.ascent.toFixed(1)})`);
+check('noisy hill: ascent ≈ descent', near(a.ascent, a.descent, 2));
+
+// Reversal swaps ascent and descent
+const up = route(3000, (d) => (d < 1000 ? d * 0.12 : 120 + (d - 1000) * -0.02));
+const rev = up.map((p, i) => ({ ...p, d: up.at(-1).d - up[up.length - 1 - i].d, e: up[up.length - 1 - i].e }));
+const a1 = analyze(up), a2 = analyze(rev);
+check('reverse: ascent/descent swap', near(a1.ascent, a2.descent, 0.5) && near(a1.descent, a2.ascent, 0.5));
+check('reverse: steep-uphill version is harder or equal', a1.level >= a2.level, `(${a1.level + 1} vs ${a2.level + 1})`);
+
+// Long mountain walk: 15 km, 900 m up
+a = analyze(route(15000, (d) => (d < 7500 ? d * 0.12 : 900 - (d - 7500) * 0.12)));
+check('15 km / 900 m: Very hard', a.level === 4, `(effort ${a.effortKm.toFixed(1)})`);
+
+// Climb detection tolerates small dips
+const ce = Float64Array.from([0, 5, 10, 8, 15, 20, 10, 0]);
+check('findClimbs tolerates < 5 m dip', JSON.stringify(findClimbs(ce)) === '[{"start":0,"end":5}]');
+
+// Missing data
+a = analyze(route(1000, (d) => (d > 300 && d < 500 ? null : d * 0.05)));
+check('missing elevations interpolated', a.missing === 19 && near(a.ascent, 50, 2), `(missing ${a.missing}, ascent ${a.ascent.toFixed(1)})`);
+
+// Routing / planner helpers
+const dec = decodePolyline6('_p~iF~ps|U_ulLnnqC_mqNvxq`@');
+check('decodePolyline6', dec.length === 3 && near(dec[0].lat, 3.85, 1e-9) && near(dec[0].lng, -12.02, 1e-9) && near(dec[2].lat, 4.3252, 1e-9));
+const P = (lat, lng) => ({ lat, lng });
+const spur = [P(0, 0), P(0, 0.001), P(0.001, 0.001), P(0.002, 0.001), P(0.002, 0.001), P(0.001, 0.001), P(0, 0.001), P(0, 0.002)];
+const trimmed = trimSpur(spur, P(0.002, 0.001));
+check('trimSpur removes out-and-back', trimmed.length === 3 && trimmed[1].lng === 0.001 && trimmed[2].lng === 0.002, JSON.stringify(trimmed));
+const sp = sidePoint(P(0, 0), P(0, 0.01), 0.5); // eastward leg; +0.5 = left = north
+check('sidePoint offsets left of travel by f·L', near(sp.lng, 0.005, 1e-9) && near(haversine(P(0, 0.005), sp), 0.5 * haversine(P(0, 0), P(0, 0.01)), 12));
+
+out.innerHTML += `\n${pass} passed, ${fail} failed\n`;
+document.title = fail ? `FAIL ${fail}` : `PASS ${pass}`;
+document.body.dataset.result = fail ? 'fail' : 'pass';
+</script>
+</body>
+</html>

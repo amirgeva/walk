@@ -1,0 +1,161 @@
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f4f5f7;
+  --fg: #1f2933;
+  --fg-muted: #66717d;
+  --border: #dde1e6;
+  --grid: #e7eaee;
+  --accent: #2563eb;
+  --warn: #9a5b00;
+  --error: #b42318;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17191c;
+    --bg-soft: #22262b;
+    --fg: #e6e8eb;
+    --fg-muted: #9aa3ad;
+    --border: #353a41;
+    --grid: #2c3137;
+    --accent: #6ea0ff;
+    --warn: #f0b44c;
+    --error: #ff8a7a;
+    color-scheme: dark;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  display: grid;
+  grid-template-columns: 360px 1fr;
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+#panel {
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-muted); margin: 0 0 8px; }
+h3 { font-size: 13px; margin: 14px 0 6px; }
+.sub, .hint, .muted, footer { color: var(--fg-muted); }
+.sub { margin: 2px 0 0; }
+.hint { margin: 0 0 8px; font-size: 13px; }
+.muted { font-size: 12px; margin: 4px 0; }
+footer { font-size: 11px; margin-top: auto; }
+section { border-top: 1px solid var(--border); padding-top: 12px; }
+
+button, select, input[type="search"], .file-btn {
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 10px;
+}
+button, .file-btn { cursor: pointer; }
+button:hover, .file-btn:hover { border-color: var(--accent); }
+button:focus-visible, select:focus-visible, input:focus-visible, .climbs li:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.file-btn input { display: none; }
+
+#search { display: flex; gap: 6px; }
+#search input { flex: 1; min-width: 0; background: var(--bg); }
+
+.options { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 8px; }
+.check { display: flex; gap: 6px; align-items: center; }
+.buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+
+#status { min-height: 1.4em; font-size: 13px; }
+#status.info { color: var(--fg-muted); }
+#status.busy { color: var(--accent); }
+#status.busy::before { content: "⏳ "; }
+#status.warn { color: var(--warn); }
+#status.error { color: var(--error); }
+
+/* Difficulty badge */
+.level {
+  display: flex; gap: 12px; align-items: center;
+  border-left: 6px solid var(--lv);
+  background: color-mix(in srgb, var(--lv) 12%, var(--bg));
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.level-num { font-size: 32px; font-weight: 700; color: var(--lv); line-height: 1; }
+.level-num small { font-size: 14px; color: var(--fg-muted); font-weight: 400; }
+.level-name { font-size: 18px; font-weight: 650; }
+.level-text { font-size: 12.5px; color: var(--fg-muted); }
+
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin: 12px 0 0; }
+.stats dt { font-size: 11.5px; color: var(--fg-muted); }
+.stats dd { margin: 0; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stats small { font-size: 11.5px; font-weight: 400; color: var(--fg-muted); }
+
+.breakdown { display: flex; height: 12px; border-radius: 6px; overflow: hidden; gap: 1px; background: var(--border); }
+.grade-legend { list-style: none; padding: 0; margin: 8px 0 0; font-size: 12.5px; }
+.grade-legend li { display: flex; align-items: center; gap: 6px; padding: 1px 0; }
+.grade-legend i, #terrain-legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; flex: none; }
+.grade-legend small { color: var(--fg-muted); }
+.grade-legend b { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.climbs { margin: 0; padding-left: 20px; font-size: 13px; }
+.climbs li { cursor: pointer; padding: 3px 4px; border-radius: 4px; }
+.climbs li:hover { background: var(--bg-soft); }
+.climbs span { display: block; font-size: 12px; color: var(--fg-muted); }
+
+details { margin-top: 12px; font-size: 12.5px; }
+details summary { cursor: pointer; color: var(--accent); }
+details ul { padding-left: 18px; }
+
+.terrain-modes { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.opacity { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+.opacity input { flex: 1; }
+#terrain-legend { font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+#terrain-legend span { display: inline-flex; align-items: center; gap: 4px; }
+#terrain-legend p { width: 100%; }
+.ramp { height: 10px; border-radius: 3px; width: 100%; }
+.ramp-labels { display: flex; justify-content: space-between; width: 100%; color: var(--fg-muted); }
+
+/* Map side */
+main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+#map { flex: 1; min-height: 0; background: #ddd; }
+#profile-wrap { position: relative; height: 190px; border-top: 1px solid var(--border); background: var(--bg); }
+#profile-wrap[hidden] { display: none; }
+#profile { width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
+#profile-tip {
+  position: absolute; top: 4px;
+  background: var(--fg); color: var(--bg);
+  font-size: 12px; padding: 2px 8px; border-radius: 4px;
+  pointer-events: none; white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+
+.terrain-layer { mix-blend-mode: multiply; }
+.terrain-layer canvas { image-rendering: auto; }
+.elev-readout {
+  background: rgba(255, 255, 255, .85); color: #222;
+  padding: 2px 8px; border-radius: 4px; font-size: 12px; font-variant-numeric: tabular-nums;
+}
+
+/* Waypoint markers */
+.wp {
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.45);
+  color: #fff; font: 700 11px/18px system-ui, sans-serif; text-align: center;
+}
+.wp-start { background: #2f855a; }
+.wp-end { background: #c53030; }
+.wp-via { background: #2b6cb0; width: 16px; height: 16px; margin: 3px; }
+
+@media (max-width: 760px) {
+  body { display: flex; flex-direction: column-reverse; height: auto; }
+  main { height: 72vh; flex: none; }
+  #profile-wrap { height: 150px; }
+  #panel { border-right: 0; overflow: visible; padding: 14px 16px; }
+}
