@@ -4,6 +4,7 @@ import { planRoute, MODES } from './planner.js';
 import { densify, lineLength, nearestIndex } from './geo.js';
 import { analyze, GRADE_CLASSES, LEVELS } from './difficulty.js';
 import { ProfileChart } from './profile.js';
+import { routeHash, parseRouteHash } from './share.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -185,6 +186,7 @@ function recompute() {
   state.analysis = a;
   drawRoute();
   renderResults();
+  refreshShare();
   $('profile-wrap').hidden = false;
   map.invalidateSize();
   profile.setData(a);
@@ -408,23 +410,77 @@ function importGpx(text) {
 }
 
 // ---------------------------------------------------------------- URL hash (shareable routes)
+const routeFragment = () => routeHash({
+  waypoints: state.waypoints.map((m) => m.getLatLng()),
+  track: state.track,
+  mode: state.mode,
+  hillWeight: state.hillWeight,
+});
+
 function saveHash() {
-  if (state.track || !state.waypoints.length) { history.replaceState(null, '', location.pathname + location.search); return; }
-  const wp = state.waypoints.map((m) => { const p = m.getLatLng(); return `${p.lat.toFixed(5)},${p.lng.toFixed(5)}`; }).join('|');
-  const hills = state.mode === 'flat' && state.hillWeight !== 12 ? `&hills=${state.hillWeight}` : '';
-  history.replaceState(null, '', `#wp=${wp}&mode=${state.mode}${hills}`);
+  const fragment = routeFragment();
+  history.replaceState(null, '', fragment ? `#${fragment}` : location.pathname + location.search);
+  refreshShare();
 }
 
 function loadHash() {
-  const params = new URLSearchParams(location.hash.slice(1));
-  setMode(params.get('streets') === '0' ? 'straight' : params.get('mode') || 'main');
-  const hills = +params.get('hills');
-  if ([...$('opt-hills').options].some((o) => +o.value === hills)) { state.hillWeight = hills; $('opt-hills').value = hills; }
-  const wp = (params.get('wp') || '').split('|').map((s) => s.split(',').map(Number))
-    .filter(([lat, lng]) => Number.isFinite(lat) && Number.isFinite(lng));
-  wp.forEach(([lat, lng]) => addWaypoint(L.latLng(lat, lng)));
-  return wp;
+  const route = parseRouteHash(location.hash);
+  setMode(route.mode);
+  const known = [...$('opt-hills').options].some((o) => +o.value === route.hills);
+  state.hillWeight = known ? route.hills : 12;
+  $('opt-hills').value = state.hillWeight;
+
+  state.waypoints.forEach((m) => m.remove());
+  state.waypoints = [];
+  state.track = route.track;
+  if (!route.track) route.waypoints.forEach((p) => addWaypoint(L.latLng(p)));
+  scheduleUpdate();
+  const shown = route.track || route.waypoints;
+  if (shown.length) map.fitBounds(L.latLngBounds(shown), { padding: [60, 60], maxZoom: 16 });
 }
+
+// ---------------------------------------------------------------- share
+const shareableRoute = () => Boolean(state.track) || state.waypoints.length >= 2;
+
+function refreshShare() {
+  $('btn-share').disabled = !shareableRoute();
+  if (!shareableRoute()) showSharePanel(false);
+  if ($('share').hidden) return;
+
+  const url = `${location.origin}${location.pathname}${location.search}#${routeFragment()}`;
+  const a = state.analysis;
+  const title = a
+    ? `Walk route: ${fmtDist(a.distance)}, ↑ ${Math.round(a.ascent)} m climb, ${LEVELS[a.level].name} (${a.level + 1}/5)`
+    : 'Walk route';
+  $('share-url').value = url;
+  $('share-whatsapp').href = `https://wa.me/?text=${encodeURIComponent(`${title}\n${url}`)}`;
+  $('share-mail').href = `mailto:?subject=${encodeURIComponent(title)}&body=${encodeURIComponent(`${title}\n\n${url}\n`)}`;
+}
+
+function showSharePanel(show) {
+  $('share').hidden = !show;
+  $('btn-share').setAttribute('aria-expanded', String(show));
+}
+
+$('btn-share').addEventListener('click', () => {
+  showSharePanel($('share').hidden);
+  refreshShare();
+});
+
+let copiedTimer;
+$('btn-copy').addEventListener('click', async () => {
+  const button = $('btn-copy');
+  $('share-url').select();
+  try {
+    await navigator.clipboard.writeText($('share-url').value);
+    button.textContent = 'Copied ✓';
+    clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => { button.textContent = 'Copy link'; }, 1500);
+  } catch {
+    setStatus('Couldn’t reach the clipboard. The link is selected, press Ctrl+C to copy it.', 'warn');
+  }
+});
+$('share-url').addEventListener('focus', (ev) => ev.target.select());
 
 // ---------------------------------------------------------------- start-up
 (function init() {
@@ -432,8 +488,9 @@ function loadHash() {
   try { view = JSON.parse(localStorage.getItem('walk.view')); } catch { /* ignore */ }
   map.setView(view?.[0] ?? [37.7599, -122.4370], view?.[1] ?? 14); // default: San Francisco's hills
 
-  const wp = loadHash();
-  if (wp.length) map.fitBounds(L.latLngBounds(wp), { padding: [60, 60], maxZoom: 16 });
+  loadHash();
+  // Opening a shared link in a tab that already shows the app only changes the fragment, without reloading.
+  window.addEventListener('hashchange', loadHash);
 
   let mode = 'hillshade';
   try { mode = localStorage.getItem('walk.terrain') || mode; } catch { /* ignore */ }

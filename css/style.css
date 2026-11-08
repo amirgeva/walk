@@ -53,7 +53,7 @@ h3 { font-size: 13px; margin: 14px 0 6px; }
 footer { font-size: 11px; margin-top: auto; }
 section { border-top: 1px solid var(--border); padding-top: 12px; }
 
-button, select, input[type="search"], .file-btn {
+button, select, input[type="search"], #share-url, .file-btn, .btn {
   font: inherit;
   color: var(--fg);
   background: var(--bg-soft);
@@ -61,10 +61,13 @@ button, select, input[type="search"], .file-btn {
   border-radius: 6px;
   padding: 5px 10px;
 }
-button, .file-btn { cursor: pointer; }
-button:hover, .file-btn:hover { border-color: var(--accent); }
-button:focus-visible, select:focus-visible, input:focus-visible, .climbs li:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button, .file-btn, .btn { cursor: pointer; }
+button:hover, .file-btn:hover, .btn:hover { border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; border-color: var(--border); }
+button:focus-visible, select:focus-visible, input:focus-visible, .btn:focus-visible, .climbs li:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .file-btn input { display: none; }
+.btn { text-decoration: none; }
+#share-url { width: 100%; margin-bottom: 6px; background: var(--bg); }
 
 #search { display: flex; gap: 6px; }
 #search input { flex: 1; min-width: 0; background: var(--bg); }

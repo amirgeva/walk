@@ -14,18 +14,67 @@ const cache = new Map(); // key -> { data: Float32Array | undefined, promise }
 const key = (z, x, y) => `${z}/${x}/${y}`;
 const wrapX = (x, z) => { const n = 1 << z; return ((x % n) + n) % n; };
 
-let scratch;
-function decode(bitmap) {
-  scratch ??= typeof OffscreenCanvas !== 'undefined'
-    ? new OffscreenCanvas(TILE_SIZE, TILE_SIZE)
-    : Object.assign(document.createElement('canvas'), { width: TILE_SIZE, height: TILE_SIZE });
-  const ctx = scratch.getContext('2d', { willReadFrequently: true });
-  ctx.clearRect(0, 0, TILE_SIZE, TILE_SIZE);
-  ctx.drawImage(bitmap, 0, 0);
-  const px = ctx.getImageData(0, 0, TILE_SIZE, TILE_SIZE).data;
-  const out = new Float32Array(TILE_SIZE * TILE_SIZE);
-  for (let i = 0, j = 0; i < out.length; i++, j += 4) {
-    out[i] = px[j] * 256 + px[j + 1] + px[j + 2] / 256 - 32768;
+function paeth(a, b, c) {
+  const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+  return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+}
+
+/**
+ * Decode a Terrarium PNG (ArrayBuffer) to Float32Array(256*256) of elevations in metres.
+ *
+ * This deliberately parses the PNG itself instead of drawing it on a canvas and calling getImageData():
+ * browser anti-fingerprinting features and privacy extensions add noise to canvas read-backs, and in this
+ * encoding one flipped low bit of the red channel is an error of 256 m.
+ */
+export async function decodePng(buffer) {
+  const bytes = new Uint8Array(buffer), view = new DataView(buffer);
+  if (view.getUint32(0) !== 0x89504e47 || view.getUint32(4) !== 0x0d0a1a0a) throw new Error('not a PNG');
+
+  let width = 0, height = 0, bitDepth = 0, colorType = -1, interlace = 0;
+  const idat = [];
+  for (let pos = 8; pos + 8 <= bytes.length;) {
+    const len = view.getUint32(pos), type = view.getUint32(pos + 4);
+    if (type === 0x49484452) { // IHDR
+      width = view.getUint32(pos + 8);
+      height = view.getUint32(pos + 12);
+      bitDepth = bytes[pos + 16];
+      colorType = bytes[pos + 17];
+      interlace = bytes[pos + 20];
+    } else if (type === 0x49444154) { // IDAT
+      idat.push(bytes.subarray(pos + 8, pos + 8 + len));
+    } else if (type === 0x49454e44) { // IEND
+      break;
+    }
+    pos += 12 + len;
+  }
+  const bpp = colorType === 2 ? 3 : colorType === 6 ? 4 : 0; // RGB or RGBA
+  if (width !== TILE_SIZE || height !== TILE_SIZE || bitDepth !== 8 || !bpp || interlace) {
+    throw new Error(`unsupported PNG (${width}x${height}, depth ${bitDepth}, colour type ${colorType}, interlace ${interlace})`);
+  }
+
+  const stream = new Blob(idat).stream().pipeThrough(new DecompressionStream('deflate'));
+  const raw = new Uint8Array(await new Response(stream).arrayBuffer());
+  const stride = width * bpp;
+  if (raw.length !== (stride + 1) * height) throw new Error('truncated PNG data');
+
+  // Undo the per-scanline filters in place, then convert to elevations.
+  const out = new Float32Array(width * height);
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)];
+    const row = y * (stride + 1) + 1, up = row - stride - 1;
+    for (let i = 0; i < stride; i++) {
+      const a = i >= bpp ? raw[row + i - bpp] : 0;
+      const b = y ? raw[up + i] : 0;
+      const c = y && i >= bpp ? raw[up + i - bpp] : 0;
+      const predictor = filter === 0 ? 0 : filter === 1 ? a : filter === 2 ? b
+        : filter === 3 ? (a + b) >> 1 : filter === 4 ? paeth(a, b, c) : NaN;
+      if (Number.isNaN(predictor)) throw new Error(`bad PNG filter ${filter}`);
+      raw[row + i] = (raw[row + i] + predictor) & 255;
+    }
+    for (let x = 0; x < width; x++) {
+      const p = row + x * bpp;
+      out[y * width + x] = raw[p] * 256 + raw[p + 1] + raw[p + 2] / 256 - 32768;
+    }
   }
   return out;
 }
@@ -43,9 +92,9 @@ export function getDemTile(z, x, y) {
   }
   entry = { data: undefined, promise: null };
   entry.promise = fetch(tileUrl(z, x, y))
-    .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.blob(); })
-    .then((b) => createImageBitmap(b, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' }))
-    .then((bmp) => { entry.data = decode(bmp); bmp.close?.(); return entry.data; })
+    .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); })
+    .then(decodePng)
+    .then((data) => { entry.data = data; return data; })
     .catch(() => { cache.delete(k); return null; });
   cache.set(k, entry);
   while (cache.size > CACHE_LIMIT) cache.delete(cache.keys().next().value);

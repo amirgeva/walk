@@ -10,6 +10,8 @@ import { analyze, fillGaps, findClimbs, gradeClass, toblerSpeed } from './js/dif
 import { densify, haversine } from './js/geo.js';
 import { decodePolyline6 } from './js/routing.js';
 import { trimSpur, sidePoint } from './js/planner.js';
+import { decodePng } from './js/elevation.js';
+import { routeHash, parseRouteHash, encodeTrack, simplify } from './js/share.js';
 
 const out = document.getElementById('out');
 let pass = 0, fail = 0;
@@ -79,8 +81,52 @@ check('findClimbs tolerates < 5 m dip', JSON.stringify(findClimbs(ce)) === '[{"s
 a = analyze(route(1000, (d) => (d > 300 && d < 500 ? null : d * 0.05)));
 check('missing elevations interpolated', a.missing === 19 && near(a.ascent, 50, 2), `(missing ${a.missing}, ascent ${a.ascent.toFixed(1)})`);
 
+// PNG decoding: build a tile using every scanline filter and check each elevation comes back exactly
+async function makePng(bpp, { bitDepth = 8 } = {}) {
+  const W = 256, stride = W * bpp, data = new Uint8Array((stride + 1) * W), plain = new Uint8Array(stride * W);
+  const elevAt = (x, y) => 37 + x * 0.75 + y * 0.5 + (x * y) % 7;
+  for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) {
+    const v = elevAt(x, y) + 32768, p = (y * W + x) * bpp;
+    plain[p] = Math.floor(v / 256); plain[p + 1] = Math.floor(v) & 255; plain[p + 2] = Math.round((v % 1) * 256);
+    if (bpp === 4) plain[p + 3] = 255;
+  }
+  const paeth = (a, b, c) => { const p = a + b - c, A = Math.abs(p - a), B = Math.abs(p - b), C = Math.abs(p - c); return A <= B && A <= C ? a : B <= C ? b : c; };
+  for (let y = 0; y < W; y++) {
+    const f = y % 5, o = y * (stride + 1);
+    data[o] = f;
+    for (let i = 0; i < stride; i++) {
+      const cur = plain[y * stride + i], a = i >= bpp ? plain[y * stride + i - bpp] : 0, b = y ? plain[(y - 1) * stride + i] : 0, c = y && i >= bpp ? plain[(y - 1) * stride + i - bpp] : 0;
+      data[o + 1 + i] = cur - [0, a, b, (a + b) >> 1, paeth(a, b, c)][f];
+    }
+  }
+  const z = new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
+  const chunk = (type, body) => { const c = new Uint8Array(12 + body.length), v = new DataView(c.buffer); v.setUint32(0, body.length); for (let i = 0; i < 4; i++) c[4 + i] = type.charCodeAt(i); c.set(body, 8); return c; };
+  const ihdr = new Uint8Array(13), v = new DataView(ihdr.buffer); v.setUint32(0, W); v.setUint32(4, W); ihdr[8] = bitDepth; ihdr[9] = bpp === 3 ? 2 : 6;
+  const png = await new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', z), chunk('IEND', new Uint8Array())]).arrayBuffer();
+  return { png, elevAt };
+}
+for (const bpp of [3, 4]) {
+  const { png, elevAt } = await makePng(bpp);
+  const e = await decodePng(png);
+  let worst = 0;
+  for (let y = 0; y < 256; y++) for (let x = 0; x < 256; x++) worst = Math.max(worst, Math.abs(e[y * 256 + x] - elevAt(x, y)));
+  check(`decodePng: all 5 filters, ${bpp === 3 ? 'RGB' : 'RGBA'}`, worst < 0.01, `(worst error ${worst.toFixed(4)} m)`);
+}
+const rejected = await decodePng((await makePng(3, { bitDepth: 16 })).png).then(() => false, () => true);
+check('decodePng rejects unsupported formats', rejected);
+
+// A canvas must not be involved: tampering with read-backs may not change the decoded elevations
+{
+  const { png, elevAt } = await makePng(3);
+  const tamper = (proto) => { if (!proto) return null; const orig = proto.getImageData; proto.getImageData = function (...a) { const r = orig.apply(this, a); r.data[0] ^= 1; return r; }; return () => { proto.getImageData = orig; }; };
+  const undo = [tamper(CanvasRenderingContext2D.prototype), tamper(globalThis.OffscreenCanvasRenderingContext2D?.prototype)];
+  const e = await decodePng(png);
+  undo.forEach((f) => f?.());
+  check('decodePng is unaffected by canvas read-back noise', near(e[0], elevAt(0, 0), 0.01));
+}
+
 // Routing / planner helpers
-const dec = decodePolyline6('_p~iF~ps|U_ulLnnqC_mqNvxq`@');
+const dec =decodePolyline6('_p~iF~ps|U_ulLnnqC_mqNvxq`@');
 check('decodePolyline6', dec.length === 3 && near(dec[0].lat, 3.85, 1e-9) && near(dec[0].lng, -12.02, 1e-9) && near(dec[2].lat, 4.3252, 1e-9));
 const P = (lat, lng) => ({ lat, lng });
 const spur = [P(0, 0), P(0, 0.001), P(0.001, 0.001), P(0.002, 0.001), P(0.002, 0.001), P(0.001, 0.001), P(0, 0.001), P(0, 0.002)];
@@ -88,6 +134,37 @@ const trimmed = trimSpur(spur, P(0.002, 0.001));
 check('trimSpur removes out-and-back', trimmed.length === 3 && trimmed[1].lng === 0.001 && trimmed[2].lng === 0.002, JSON.stringify(trimmed));
 const sp = sidePoint(P(0, 0), P(0, 0.01), 0.5); // eastward leg; +0.5 = left = north
 check('sidePoint offsets left of travel by f·L', near(sp.lng, 0.005, 1e-9) && near(haversine(P(0, 0.005), sp), 0.5 * haversine(P(0, 0), P(0, 0.01)), 12));
+
+// Share links
+{
+  const wps = [P(32.694875, 35.108678), P(-33.86, 151.2), P(51.5, -0.12)];
+  const hash = routeHash({ waypoints: wps, track: null, mode: 'flat', hillWeight: 30 });
+  const back = parseRouteHash(`#${hash}`);
+  check('share: waypoints, mode and hills round-trip', back.waypoints.length === 3 && near(back.waypoints[1].lat, -33.86, 1e-5) && near(back.waypoints[2].lng, -0.12, 1e-5) && back.mode === 'flat' && back.hills === 30, hash);
+  check('share: link uses only characters that survive auto-linking', /^[\w.,=&-]+$/.test(hash) && !hash.includes('_'));
+  check('share: default hills left out', !routeHash({ waypoints: wps, track: null, mode: 'flat', hillWeight: 12 }).includes('hills'));
+  check('share: no route gives no fragment', routeHash({ waypoints: [], track: null, mode: 'main', hillWeight: 12 }) === '');
+
+  const old = parseRouteHash('#wp=32.5,35.1|32.6,35.2&mode=short');
+  check('share: older links with | still open', old.waypoints.length === 2 && old.waypoints[1].lng === 35.2 && old.mode === 'short');
+  const pct = parseRouteHash('#wp=32.5%2C35.1%2C32.6%2C35.2');
+  check('share: percent-encoded commas are understood', pct.waypoints.length === 2 && pct.mode === 'main');
+  check('share: damaged link keeps its valid points', parseRouteHash('#wp=32.5,35.1,999,35.2,32.6,35.2,').waypoints.length === 2);
+  check('share: empty link is empty', parseRouteHash('').waypoints.length === 0 && parseRouteHash('').track === null);
+  check('share: corrupt track is ignored', parseRouteHash('#t=3250000,3510000,abc').track === null);
+
+  // A winding 10 km track of 5000 points must fit in a link and stay close to the original
+  const winding = Array.from({ length: 5000 }, (_, i) => P(32.7 + i * 1.8e-5, 35.1 + 0.001 * Math.sin(i / 40)));
+  const encoded = encodeTrack(winding);
+  const line = parseRouteHash(`#t=${encoded}`).track;
+  const worst = Math.max(...winding.filter((_, i) => i % 50 === 0).map((p) => Math.min(...line.map((q) => haversine(p, q)))));
+  check('share: long track fits in a link', encoded.length <= 1600 && line.length >= 2, `(${winding.length} → ${line.length} pts, ${encoded.length} chars)`);
+  check('share: track ends are exact and shape is kept', near(line[0].lat, winding[0].lat, 1e-5) && near(line.at(-1).lng, winding.at(-1).lng, 1e-5) && worst < 150, `(worst sampled offset from a kept vertex ${worst.toFixed(0)} m)`);
+  const short = [P(32.7, 35.1), P(32.71, 35.11), P(32.7, 35.12)];
+  check('share: short track is left unchanged', parseRouteHash(`#t=${encodeTrack(short)}`).track.length === 3);
+  const loop = [P(32.7, 35.1), P(32.71, 35.1), P(32.71, 35.11), P(32.7, 35.1)];
+  check('simplify keeps a closed loop', simplify(loop, 5).length === 4);
+}
 
 out.innerHTML += `\n${pass} passed, ${fail} failed\n`;
 document.title = fail ? `FAIL ${fail}` : `PASS ${pass}`;
